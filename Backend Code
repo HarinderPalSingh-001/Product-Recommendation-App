@@ -1,0 +1,125 @@
+# main.py  (FASTAPI BACK-END – FULLY FIXED & READY)
+
+import os
+import pandas as pd
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from pinecone import Pinecone, ServerlessSpec
+from sentence_transformers import SentenceTransformer
+from langchain_groq import ChatGroq
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+# ---------- 1. KEYS ----------
+PINECONE_API_KEY = "pcsk_2uUED4_TXNk2hoEshtDTDQMVe6ZwnABtuqYrF6LUTgv2aw9CkkPCoHw3KuLiBhTxmRk9sq"
+GROQ_API_KEY     = "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"
+
+# ---------- 2. FASTAPI APP ----------
+app = FastAPI()
+
+# ✅ Allow all origins for development (frontend requests will not be blocked)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------- 3. LOAD MODELS / DATA ----------
+print("🔄 Loading models and connecting to Pinecone…")
+
+pc = Pinecone(api_key=PINECONE_API_KEY)
+index_name = "product-recommendations"
+
+# Create index if missing
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=512,
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1")
+    )
+
+index = pc.Index(index_name)
+model = SentenceTransformer("clip-ViT-B-32")
+
+# Local files
+df = pd.read_csv("product-rec-app.csv").set_index("uniq_id")
+analytics_df = pd.read_json("analytics_data.json")
+
+# LLM chain setup
+llm = ChatGroq(model="llama3-8b-8192", temperature=0.7, groq_api_key=GROQ_API_KEY)
+prompt_template = ChatPromptTemplate.from_template(
+    "You are a witty furniture copywriter. "
+    "Write a short, punchy, 2-sentence product description for:\n"
+    "Title: {title}\nBrand: {brand}\nColor: {color}\nMaterial: {material}"
+)
+llm_chain = prompt_template | llm | StrOutputParser()
+
+print("✅ Models and database connections loaded!")
+
+# ---------- 4. SCHEMAS ----------
+class QueryRequest(BaseModel):
+    query: str
+
+class Product(BaseModel):
+    id: str
+    title: str
+    brand: str
+    price: str
+    image_url: str
+    generated_description: str
+
+# ---------- 5. ENDPOINTS ----------
+@app.get("/")
+def root():
+    return {"message": "Product Recommendation API 🚀"}
+
+@app.get("/analytics")
+def analytics():
+    return analytics_df.to_dict()
+
+@app.post("/recommend", response_model=list[Product])
+async def recommend(req: QueryRequest):
+    try:
+        print(f"🔍 Query: {req.query}")
+        emb = model.encode(req.query).tolist()
+        res = index.query(vector=emb, top_k=5, include_metadata=True)
+
+        out = []
+        for m in res.get("matches", []):
+            pid = m["id"]
+            meta = m.get("metadata", {})
+            details = df.loc[pid]
+
+            desc = llm_chain.invoke({
+                "title": meta.get("title", "N/A"),
+                "brand": meta.get("brand", "N/A"),
+                "color": str(details.get("color", "N/A")),
+                "material": str(details.get("material", "N/A"))
+            })
+
+            out.append(Product(
+                id=pid,
+                title=meta.get("title", "N/A"),
+                brand=meta.get("brand", "N/A"),
+                price=meta.get("price", "N/A"),
+                image_url=meta.get("image_url", meta.get("img_url", "")),
+                generated_description=desc
+            ))
+
+        print("✅ Recommendations generated")
+        return out
+
+    except Exception as e:
+        print(f"❌ /recommend error: {e}")
+        return []
+
+# ---------- 6. RUN ----------
+if __name__ == "__main__":
+    import uvicorn
+    print("🚀 Starting backend on http://127.0.0.1:5000")
+    uvicorn.run(app, host="127.0.0.1", port=5000, reload=True)
