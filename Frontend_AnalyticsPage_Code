@@ -1,0 +1,138 @@
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+
+// Helper function to format data for charts
+const formatDataForChart = (dataObject) => {
+  // Check if dataObject is valid before trying to use Object.entries
+  if (!dataObject || typeof dataObject !== 'object') {
+    return []; 
+  }
+  return Object.entries(dataObject).map(([name, value]) => ({ name, value }));
+};
+
+// Helper to format price distribution for BarChart
+const formatPriceData = (priceDist) => {
+    if (!priceDist || !priceDist.bins || !priceDist.counts) return [];
+    const categories = priceDist.bins.slice(0, -1).map((binStart, index) => {
+        const binEnd = priceDist.bins[index + 1];
+        // Ensure binStart and binEnd are numbers before calling toFixed
+        const start = typeof binStart === 'number' ? binStart.toFixed(0) : 'N/A';
+        const end = typeof binEnd === 'number' ? binEnd.toFixed(0) : 'N/A';
+        return `$${start}-$${end}`;
+    });
+    return categories.map((name, index) => ({
+        name: name,
+        // Ensure counts[index] is a number
+        value: typeof priceDist.counts[index] === 'number' ? priceDist.counts[index] : 0
+    }));
+};
+
+
+function AnalyticsPage() {
+  const [analyticsData, setAnalyticsData] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    // Fetch data from the /analytics endpoint when the page loads
+    const fetchData = async () => {
+      setError(''); // Clear previous errors
+      try {
+        const response = await axios.get('http://127.0.0.1:5000/analytics');
+         if (response.data && typeof response.data === 'object') { // Check if data is an object
+            setAnalyticsData(response.data);
+        } else {
+             setError('Received invalid or empty analytics data.');
+             console.error("Invalid data received:", response.data);
+        }
+      } catch (err) {
+        setError('Failed to load analytics data.');
+        console.error("Analytics fetch error:", err);
+      }
+    };
+    fetchData();
+  }, []); // Empty dependency array means this runs once on mount
+
+  if (error) return <p className="error-message">{error}</p>;
+  if (!analyticsData) return <p>Loading analytics...</p>;
+
+  // Format data for our charts, with checks
+  const categoryData = analyticsData.top_categories ? formatDataForChart(analyticsData.top_categories) : [];
+  const brandData = analyticsData.top_brands ? formatDataForChart(analyticsData.top_brands) : [];
+  const materialData = analyticsData.top_materials ? formatDataForChart(analyticsData.top_materials) : [];
+  const priceData = analyticsData.price_distribution ? formatPriceData(analyticsData.price_distribution) : [];
+
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82ca9d', '#ffc658', '#d0ed57', '#a4de6c', '#8dd1e1'];
+
+
+  return (
+    <div className="page-container analytics-page">
+      <h2>Data Analytics</h2>
+
+      <div className="chart-grid">
+
+        {categoryData.length > 0 ? (
+            <div className="chart-container">
+            <h3>Top Categories</h3>
+            <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={categoryData} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
+                <XAxis type="number" />
+                <YAxis type="category" dataKey="name" interval={0} fontSize={10} />
+                <Tooltip />
+                <Bar dataKey="value" fill="#8884d8" />
+                </BarChart>
+            </ResponsiveContainer>
+            </div>
+        ) : <p>No category data available.</p>}
+
+        {brandData.length > 0 ? (
+            <div className="chart-container">
+            <h3>Top 10 Brands</h3>
+            <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={brandData} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
+                <XAxis type="number" />
+                <YAxis type="category" dataKey="name" interval={0} fontSize={10}/>
+                <Tooltip />
+                <Bar dataKey="value" fill="#82ca9d" />
+                </BarChart>
+            </ResponsiveContainer>
+            </div>
+        ) : <p>No brand data available.</p>}
+
+        {materialData.length > 0 ? (
+            <div className="chart-container">
+            <h3>Top Materials</h3>
+            <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                <Pie data={materialData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} labelLine={false} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                    {materialData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                </Pie>
+                <Tooltip />
+                <Legend />
+                </PieChart>
+            </ResponsiveContainer>
+            </div>
+         ) : <p>No material data available.</p>}
+
+        {priceData.length > 0 ? (
+             <div className="chart-container">
+               <h3>Price Distribution</h3>
+               <ResponsiveContainer width="100%" height={300}>
+                 <BarChart data={priceData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                   <XAxis dataKey="name" />
+                   <YAxis />
+                   <Tooltip />
+                   <Bar dataKey="value" fill="#ffc658" />
+                 </BarChart>
+               </ResponsiveContainer>
+             </div>
+         ) : <p>No price distribution data available.</p>}
+
+      </div>
+    </div>
+  );
+}
+
+export default AnalyticsPage;
